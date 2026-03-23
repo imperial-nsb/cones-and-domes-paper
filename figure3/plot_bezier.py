@@ -19,7 +19,8 @@ import equinox as eqx
 from jaxisymmetric import SimConfig, Source, run_simulation
 from jaxisymmetric.geometry import BezierGeometry
 from jaxisymmetric.loss import IntersectionPenalty, RoiMseLoss, rectangular_roi
-from jaxisymmetric.sources import make_focused_bowl_source
+from jaxisymmetric.sources import make_holography_source
+from scipy.io import loadmat
 from jaxisymmetric.train import run_optimization
 
 # ---------------------------------------------------------------------------
@@ -34,32 +35,38 @@ cfl = 0.1
 dt = cfl * dx / c0
 ramp_steps = round(3 * (1 / source_freq) / dt)
 
-# Transducer params (H-117 nominal)
-H117_ROC = 60e-3
-H117_OUTER = 60e-3
-H117_INNER = 20e-3
+# Transducer params (H-117 nominal focal area configuration)
 H117_FOCUS_X = 80e-3
 
 cfg = SimConfig(Nx=Nx, Nr=Nr, dx=dx, dr=dr, c0=c0, rho0=rho0, cfl=cfl)
 
-source_mask = make_focused_bowl_source(
+ROOT = Path(__file__).resolve().parents[1]
+rdata = loadmat(str(ROOT / "data" / "rprofile_FF.mat"))
+r_centers = jnp.array(rdata["r_centers"]).squeeze()
+radial_prof = jnp.array(rdata["radial_prof"]).squeeze()
+
+zpos = (Nx / 2) * dx - 40e-3
+rpos = 37e-3
+
+src_mask = make_holography_source(
     cfg,
-    focus_pos=H117_FOCUS_X,
-    radius_curvature=H117_ROC,
-    outer_diameter=H117_OUTER,
-    inner_diameter=H117_INNER,
+    source_zpos=zpos,
+    source_rpos=rpos,
+    r_centers=r_centers,
+    radial_prof=radial_prof,
 )
-source = Source(mask=source_mask, freq=source_freq, ramp_steps=ramp_steps)
+source_binary = jnp.abs(src_mask) > 0
+source = Source(mask=src_mask, freq=source_freq, ramp_steps=ramp_steps)
 
 # ---------------------------------------------------------------------------
 # 2.  Bézier definition
 # ---------------------------------------------------------------------------
-P1 = jnp.array([20e-3, 35e-3])
-P2 = jnp.array([70e-3, 10e-3])
+P1 = jnp.array([zpos - 2e-3, rpos + 2e-3])
+P2 = jnp.array([70e-3, 14.5e-3])
 
-initial_cp = jnp.array([(P1[0] + P2[0]) / 2, (P2[1] + 1.5 * P1[1]) / 2])
+initial_cp = jnp.array([(P1[0] + P2[0]) / 2, (P2[1] + 2 * P1[1]) / 2])
 lower = jnp.array([P1[0], P2[1]])
-upper = jnp.array([P2[0], 1.5 * P1[1]])
+upper = jnp.array([P2[0], 2 * P1[1]])
 
 def physical_to_latent(cp_phys, l, u):
     norm = jnp.clip((cp_phys - l) / (u - l + 1e-12), 1e-5, 1.0 - 1e-5)
@@ -73,7 +80,7 @@ geometry = BezierGeometry(
     control_point=latent_cp,
     P1=P1,
     P2=P2,
-    thickness=2.0e-3,
+    thickness=1.0e-3,
 )
 
 def to_physical(geom: BezierGeometry) -> BezierGeometry:
@@ -102,7 +109,7 @@ roi_mask = rectangular_roi(
 # ---------------------------------------------------------------------------
 # 4.  Loss function
 # ---------------------------------------------------------------------------
-loss_obj = RoiMseLoss(target_field, roi_mask) + 10.0 * IntersectionPenalty(source_mask)
+loss_obj = RoiMseLoss(target_field, roi_mask) + 10.0 * IntersectionPenalty(source_binary)
 
 
 def loss_fn(latent_geom: BezierGeometry):
@@ -118,7 +125,7 @@ def loss_fn(latent_geom: BezierGeometry):
 result = run_optimization(
     loss_fn,
     geometry,
-    n_steps=20,
+    n_steps=100,
     opt=optax.adam(0.1),
     verbose=True,
     log_every=5,
@@ -150,8 +157,8 @@ field_full = jnp.concatenate([final_field[:, 1:][:, ::-1], final_field], axis=1)
 im = ax.imshow(field_full.T / 1e6, extent=extent, cmap="magma", origin="upper", aspect="auto")
 ax.contour(x*1e3, r*1e3, final_shape.T, levels=[0.5], colors="white", linewidths=1.5)
 ax.contour(x*1e3, -r*1e3, final_shape.T, levels=[0.5], colors="white", linewidths=1.5)
-ax.contour(x*1e3, r*1e3, source_mask.T, levels=[0.5], colors="cyan", linewidths=1.5)
-ax.contour(x*1e3, -r*1e3, source_mask.T, levels=[0.5], colors="cyan", linewidths=1.5)
+ax.contour(x*1e3, r*1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5)
+ax.contour(x*1e3, -r*1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5)
 ax.plot(final_geometry.control_point[0]*1e3, final_geometry.control_point[1]*1e3, 'wx')
 ax.plot(final_geometry.control_point[0]*1e3, -final_geometry.control_point[1]*1e3, 'wx')
 fig.colorbar(im, ax=ax, label="Peak Pressure [MPa]")
