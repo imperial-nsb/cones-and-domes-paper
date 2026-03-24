@@ -36,8 +36,7 @@ H117_FOCUS_X = 80e-3
 
 cfg = SimConfig(Nx=Nx, Nr=Nr, dx=dx, dr=dr, c0=c0, rho0=rho0, cfl=cfl)
 
-ROOT = Path(__file__).resolve().parents[1]
-rdata = loadmat(str(ROOT / "data" / "rprofile_FF.mat"))
+rdata = loadmat("data/rprofile_FF.mat")
 r_centers = jnp.array(rdata["r_centers"]).squeeze()
 radial_prof = jnp.array(rdata["radial_prof"]).squeeze()
 

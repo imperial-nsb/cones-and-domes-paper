@@ -22,17 +22,9 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from jax import device_put
-from scipy.io import loadmat
-
 from jaxisymmetric import SimConfig, Source, run_simulation
 from jaxisymmetric.sources import make_focused_bowl_source
-
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
-ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "data"
-OUT = Path(__file__).resolve().parent
+from scipy.io import loadmat
 
 # ---------------------------------------------------------------------------
 # H-117 transducer parameters (nominal)
@@ -81,7 +73,7 @@ print("  done.")
 # ---------------------------------------------------------------------------
 # Load k-Wave reference
 # ---------------------------------------------------------------------------
-kwave_raw = loadmat(str(DATA / "H117_FreeFieldkWave.mat"))
+kwave_raw = loadmat("data/H117_FreeFieldkWave.mat")
 
 # Pre-processing: mirror and crop PML
 crop = PML_WIDTH
@@ -89,8 +81,7 @@ crop = PML_WIDTH
 jax_data = jnp.concatenate([jax_data[:, 1:][:, ::-1], jax_data], axis=1)
 jax_sim = jax_data[crop:-crop, crop:-crop]
 
-kwave_sim = device_put(kwave_raw["p_max_full"])
-kwave_sim = kwave_sim[crop:-crop, crop:-crop]
+kwave_sim = kwave_raw["p_max_full"][crop:-crop, crop:-crop]
 
 x_vec = 1e3 * x[crop:-crop]
 r_vec_full = jnp.concatenate([-jnp.flip(r[1:]), r])
@@ -131,7 +122,7 @@ def plot_panel(ax, data, title, is_diff=False):
         aspect="equal",
         cmap="viridis",
     )
-    ax.contour(x_vec, r_vec, mask_full.T, levels=[0.5], colors="k", linewidths=1)
+    ax.contour(x_vec, r_vec, mask_full.T, levels=[0.5], colors="w", linewidths=1)
     ax.set_title(title)
     ax.set_ylabel("Radial Position [mm]")
     fig.colorbar(im, ax=ax)
@@ -142,6 +133,8 @@ plot_panel(axes[1], kwave_sim, "b) k-Wave Gain [ref. 1]")
 plot_panel(axes[2], difference, "c) Absolute Difference [%]", is_diff=True)
 
 axes[2].set_xlabel("Axial Position [mm]")
+
+OUT = Path(__file__).resolve().parent
 
 plt.tight_layout()
 plt.savefig(str(OUT / "freefield_comparison.pdf"), format="pdf")

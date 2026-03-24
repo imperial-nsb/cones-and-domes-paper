@@ -23,18 +23,10 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from jax import device_put
-from scipy.io import loadmat
-
 from jaxisymmetric import SimConfig, Source, run_simulation
 from jaxisymmetric.geometry import FixedGeometry
 from jaxisymmetric.sources import make_holography_source
-
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
-ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "paper" / "data"
-OUT = Path(__file__).resolve().parent
+from scipy.io import loadmat
 
 # ---------------------------------------------------------------------------
 # Grid and simulation config
@@ -58,7 +50,7 @@ r = jnp.arange(Nr) * dr
 # ---------------------------------------------------------------------------
 # Transducer source from measured radial profile (acoustic holography)
 # ---------------------------------------------------------------------------
-rdata = loadmat(str(DATA / "rprofile_FF.mat"))
+rdata = loadmat("data/rprofile_FF.mat")
 r_centers = jnp.array(rdata["r_centers"]).squeeze()
 radial_prof = jnp.array(rdata["radial_prof"]).squeeze()
 
@@ -78,7 +70,7 @@ source = Source(mask=src_mask, freq=source_freq, ramp_steps=ramp_steps)
 # ---------------------------------------------------------------------------
 cone = FixedGeometry.from_mat(
     cfg,
-    mat_file_path=str(DATA / "C103cone.mat"),
+    mat_file_path=str("data/C103cone.mat"),
     c=2750.0,
     rho=1190.0,
     mask_key="C103array2D",
@@ -97,7 +89,7 @@ print("  done.")
 # ---------------------------------------------------------------------------
 # Load k-Wave reference
 # ---------------------------------------------------------------------------
-kwave_raw = loadmat(str(DATA / "EXPH117_C103_kWave.mat"))
+kwave_raw = loadmat("data/EXPH117_C103_kWave.mat")
 
 crop = PML_WIDTH
 
@@ -155,7 +147,7 @@ def plot_panel(ax, data, title, is_diff=False):
         aspect="equal",
         cmap="viridis",
     )
-    ax.contour(x_vec, r_vec, mask_full.T, levels=[0.5], colors="k", linewidths=1)
+    ax.contour(x_vec, r_vec, mask_full.T, levels=[0.5], colors="w", linewidths=1)
     ax.set_title(title)
     ax.set_ylabel("Radial Position [mm]")
     fig.colorbar(im, ax=ax)
@@ -166,6 +158,8 @@ plot_panel(axes[1], kwave_sim, "e) k-Wave Pressure [MPa]")
 plot_panel(axes[2], difference_norm, "f) Normalised Difference [%]", is_diff=True)
 
 axes[2].set_xlabel("Axial Position [mm]")
+
+OUT = Path(__file__).resolve().parent
 
 plt.tight_layout()
 plt.savefig(str(OUT / "c103_comparison.pdf"), format="pdf")

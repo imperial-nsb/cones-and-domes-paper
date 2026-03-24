@@ -34,8 +34,7 @@ ramp_steps = round(3 * (1 / source_freq) / dt)
 cfg = SimConfig(Nx=Nx, Nr=Nr, dx=dx, dr=dr, c0=c0, rho0=rho0, cfl=cfl)
 
 # Load transducer profile
-ROOT = Path(__file__).resolve().parents[1]
-rdata = loadmat(str(ROOT / "data" / "rprofile_FF.mat"))
+rdata = loadmat("data/rprofile_FF.mat")
 r_centers = jnp.array(rdata["r_centers"]).squeeze()
 radial_prof = jnp.array(rdata["radial_prof"]).squeeze()
 
