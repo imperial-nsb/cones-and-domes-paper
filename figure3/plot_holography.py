@@ -9,23 +9,18 @@ Produces snapshots and results used for Figure 03 panels (e-h).
 """
 
 from pathlib import Path
+from typing import cast
 
 import jax
 import jax.numpy as jnp
-import optax
 import matplotlib.pyplot as plt
-import equinox as eqx
-from scipy.io import loadmat
-
-from jaxisymmetric import SimConfig, Source, run_simulation
-from jaxisymmetric.geometry import SplineGeometry, RbfGeometry
+import optax
+from jaxisymmetric import BoundedParam, SimConfig, Source, run_simulation
+from jaxisymmetric.geometry import RbfGeometry, SplineGeometry
 from jaxisymmetric.loss import FocalPressureLoss, IntersectionPenalty, rectangular_roi
 from jaxisymmetric.sources import make_holography_source
 from jaxisymmetric.train import run_optimization
-
-def physical_to_latent(cp_phys, l, u):
-    norm = jnp.clip((cp_phys - l) / (u - l + 1e-12), 1e-5, 1.0 - 1e-5)
-    return jnp.log(norm / (1.0 - norm))
+from scipy.io import loadmat
 
 # ---------------------------------------------------------------------------
 # 1.  Grid and simulation config
@@ -82,53 +77,58 @@ loss_obj = FocalPressureLoss(roi_mask) + 10.0 * IntersectionPenalty(source_binar
 P1 = jnp.array([zpos - 0.5e-3, rpos + 2e-3])
 P6_x_fixed = zpos + 48e-3
 
-spline_lower = jnp.array([
-    [0.0, 0.0],
-    [zpos + 5e-3, 2e-3],
-    [zpos + 16e-3, 2e-3],
-    [zpos + 26e-3, 2e-3],
-    [zpos + 35e-3, 2e-3],
-    [0.0, 2e-3]
-])
-spline_upper = jnp.array([
-    [1.0, 1.0], 
-    [zpos + 15e-3, 60e-3],
-    [zpos + 25e-3, 60e-3],
-    [zpos + 35e-3, 60e-3],
-    [zpos + 46e-3, 60e-3],
-    [1.0, 20e-3]
-])
+# Degenerate bounds (lower == upper) pin fixed coordinates with zero gradient:
+#   row 0      → P1 fully fixed
+#   row 5 col 0 → P6_x_fixed (x only); r is learnable
+spline_lower = jnp.array(
+    [
+        P1,
+        [zpos + 5e-3, 2e-3],
+        [zpos + 16e-3, 2e-3],
+        [zpos + 26e-3, 2e-3],
+        [zpos + 35e-3, 2e-3],
+        [P6_x_fixed, 2e-3],
+    ]
+)
+spline_upper = jnp.array(
+    [
+        P1,
+        [zpos + 15e-3, 60e-3],
+        [zpos + 25e-3, 60e-3],
+        [zpos + 35e-3, 60e-3],
+        [zpos + 46e-3, 60e-3],
+        [P6_x_fixed, 20e-3],
+    ]
+)
 
-initial_cps_physical = jnp.array([
-    P1,
-    [zpos + 10e-3, 40e-3],
-    [zpos + 20e-3, 30e-3],
-    [zpos + 30e-3, 20e-3],
-    [zpos + 40e-3, 10e-3],
-    [P6_x_fixed, 10e-3],
-])
-
-latent_cps = physical_to_latent(initial_cps_physical, spline_lower, spline_upper)
+initial_cps_physical = jnp.array(
+    [
+        P1,
+        [zpos + 10e-3, 40e-3],
+        [zpos + 20e-3, 30e-3],
+        [zpos + 30e-3, 20e-3],
+        [zpos + 40e-3, 10e-3],
+        [P6_x_fixed, 10e-3],
+    ]
+)
 
 geometry_spline = SplineGeometry(
     c=2500.0,
     rho=1178.0,
-    control_points=latent_cps,
+    control_points=BoundedParam.from_physical(
+        initial_cps_physical,
+        lower=spline_lower,
+        upper=spline_upper,
+    ),
     thickness=2.0e-3,
 )
 
-def to_physical_spline(latent_geom: SplineGeometry) -> SplineGeometry:
-    cps_latent = latent_geom.control_points
-    cps_phys = spline_lower + (spline_upper - spline_lower) * jax.nn.sigmoid(cps_latent)
-    cps_phys = cps_phys.at[0].set(P1)
-    cps_phys = cps_phys.at[5, 0].set(P6_x_fixed)
-    return eqx.tree_at(lambda g: g.control_points, latent_geom, cps_phys)
 
-def loss_fn_spline(latent_geom: SplineGeometry):
-    geom = to_physical_spline(latent_geom)
+def loss_fn_spline(geom):
     p_max = run_simulation(geom.as_medium(cfg), cfg, source)
     mask = geom(cfg.X, cfg.R)
     return loss_obj(p_max, mask)
+
 
 print("Running Spline optimisation...")
 result_spline = run_optimization(
@@ -139,9 +139,11 @@ result_spline = run_optimization(
     verbose=True,
     log_every=5,
 )
-final_geometry_spline = to_physical_spline(result_spline.model)
+final_geometry_spline = cast(SplineGeometry, result_spline.model)
 final_shape_spline = final_geometry_spline(cfg.X, cfg.R)
-final_field_spline = jax.jit(run_simulation)(final_geometry_spline.as_medium(cfg), cfg, source)
+final_field_spline = jax.jit(run_simulation)(
+    final_geometry_spline.as_medium(cfg), cfg, source
+)
 
 # ---------------------------------------------------------------------------
 # 4.  RBF Optimisation
@@ -158,14 +160,17 @@ upper_r_end = 20e-3
 initial_rbf_weights = jnp.array([30e-3, 25e-3, 20e-3, 15e-3, 10e-3])
 initial_r_end = 5.0e-3
 
-latent_rbf_weights = physical_to_latent(initial_rbf_weights, lower_rbf, upper_rbf)
-latent_r_end = physical_to_latent(initial_r_end, lower_r_end, upper_r_end)
-
 geometry_rbf = RbfGeometry(
     c=2500.0,
     rho=1200.0,
-    rbf_weights=latent_rbf_weights,
-    r_end=latent_r_end,
+    rbf_weights=BoundedParam.from_physical(
+        initial_rbf_weights, lower=lower_rbf, upper=upper_rbf
+    ),
+    r_end=BoundedParam.from_physical(
+        jnp.array(initial_r_end),
+        lower=jnp.array(lower_r_end),
+        upper=jnp.array(upper_r_end),
+    ),
     x_start=x_start,
     x_end=x_end,
     r_start=r_start,
@@ -173,17 +178,7 @@ geometry_rbf = RbfGeometry(
     bandwidth=0.15,
 )
 
-def to_physical_rbf(latent_geom: RbfGeometry) -> RbfGeometry:
-    w_phys = lower_rbf + (upper_rbf - lower_rbf) * jax.nn.sigmoid(latent_geom.rbf_weights)
-    r_end_phys = lower_r_end + (upper_r_end - lower_r_end) * jax.nn.sigmoid(latent_geom.r_end)
-    return eqx.tree_at(
-        lambda g: (g.rbf_weights, g.r_end),
-        latent_geom,
-        (w_phys, r_end_phys)
-    )
-
-def loss_fn_rbf(latent_geom: RbfGeometry):
-    geom = to_physical_rbf(latent_geom)
+def loss_fn_rbf(geom):
     p_max = run_simulation(geom.as_medium(cfg), cfg, source)
     mask = geom(cfg.X, cfg.R)
     return loss_obj(p_max, mask)
@@ -193,11 +188,11 @@ result_rbf = run_optimization(
     loss_fn_rbf,
     geometry_rbf,
     n_steps=50,
-    opt=optax.adam(0.2),
+    opt=optax.adam(0.3),
     verbose=True,
     log_every=5,
 )
-final_geometry_rbf = to_physical_rbf(result_rbf.model)
+final_geometry_rbf = cast(RbfGeometry, result_rbf.model)
 final_shape_rbf = final_geometry_rbf(cfg.X, cfg.R)
 final_field_rbf = jax.jit(run_simulation)(final_geometry_rbf.as_medium(cfg), cfg, source)
 

@@ -60,8 +60,8 @@ source = Source(mask=src_mask, freq=source_freq, ramp_steps=ramp_steps)
 # ---------------------------------------------------------------------------
 # 2.  Bézier definition
 # ---------------------------------------------------------------------------
-P1 = jnp.array([zpos - 2e-3, rpos + 2e-3])
-P2 = jnp.array([70e-3, 14.5e-3])
+P1 = (zpos - 2e-3, rpos + 2e-3)
+P2 = (70e-3, 14.5e-3)
 
 initial_cp = jnp.array([(P1[0] + P2[0]) / 2, (P2[1] + 2 * P1[1]) / 2])
 lower = jnp.array([P1[0], P2[1]])
