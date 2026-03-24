@@ -9,7 +9,6 @@ Produces snapshots and results used for Figure 03 panels (a-d).
 """
 
 from pathlib import Path
-from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -121,7 +120,7 @@ result = run_optimization(
     log_every=5,
 )
 
-final_geometry = cast(BezierGeometry, result.model)
+final_geometry = result.geometry
 print(f"\nOptimal control point: {final_geometry.control_point.value * 1e3} mm")
 
 # ---------------------------------------------------------------------------
@@ -175,7 +174,7 @@ ax.legend()
 
 # c) Control point trajectory
 ax = axes[2]
-cps = jnp.stack([cast(BezierGeometry, m).control_point.value for m in result.model_history]) * 1e3
+cps = jnp.stack([m.control_point.value for m in result.geometry_history]) * 1e3
 sc = ax.scatter(cps[:, 0], cps[:, 1], c=jnp.arange(len(cps)), cmap="plasma", s=10)
 ax.plot(cps[0, 0], cps[0, 1], 'gs', label="Initial")
 ax.plot(cps[-1, 0], cps[-1, 1], 'r*', label="Final")

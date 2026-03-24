@@ -9,7 +9,6 @@ Produces snapshots and results used for Figure 03 panels (e-h).
 """
 
 from pathlib import Path
-from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -139,7 +138,7 @@ result_spline = run_optimization(
     verbose=True,
     log_every=5,
 )
-final_geometry_spline = cast(SplineGeometry, result_spline.model)
+final_geometry_spline = result_spline.geometry
 final_shape_spline = final_geometry_spline(cfg.X, cfg.R)
 final_field_spline = jax.jit(run_simulation)(
     final_geometry_spline.as_medium(cfg), cfg, source
@@ -192,7 +191,7 @@ result_rbf = run_optimization(
     verbose=True,
     log_every=5,
 )
-final_geometry_rbf = cast(RbfGeometry, result_rbf.model)
+final_geometry_rbf = result_rbf.geometry
 final_shape_rbf = final_geometry_rbf(cfg.X, cfg.R)
 final_field_rbf = jax.jit(run_simulation)(final_geometry_rbf.as_medium(cfg), cfg, source)
 
