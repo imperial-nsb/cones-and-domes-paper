@@ -9,19 +9,18 @@ Produces snapshots and results used for Figure 03 panels (a-d).
 """
 
 from pathlib import Path
+from typing import cast
 
 import jax
 import jax.numpy as jnp
-import optax
 import matplotlib.pyplot as plt
-import equinox as eqx
-
-from jaxisymmetric import SimConfig, Source, run_simulation
+import optax
+from jaxisymmetric import BoundedParam, SimConfig, Source, run_simulation
 from jaxisymmetric.geometry import BezierGeometry
 from jaxisymmetric.loss import IntersectionPenalty, RoiMseLoss, rectangular_roi
 from jaxisymmetric.sources import make_holography_source
-from scipy.io import loadmat
 from jaxisymmetric.train import run_optimization
+from scipy.io import loadmat
 
 # ---------------------------------------------------------------------------
 # 1.  Grid and simulation config
@@ -68,26 +67,18 @@ initial_cp = jnp.array([(P1[0] + P2[0]) / 2, (P2[1] + 2 * P1[1]) / 2])
 lower = jnp.array([P1[0], P2[1]])
 upper = jnp.array([P2[0], 2 * P1[1]])
 
-def physical_to_latent(cp_phys, l, u):
-    norm = jnp.clip((cp_phys - l) / (u - l + 1e-12), 1e-5, 1.0 - 1e-5)
-    return jnp.log(norm / (1.0 - norm))
-
-latent_cp = physical_to_latent(initial_cp, lower, upper)
-
 geometry = BezierGeometry(
     c=2500.0,
     rho=1200.0,
-    control_point=latent_cp,
+    control_point=BoundedParam.from_physical(
+        initial_cp,
+        lower=lower,
+        upper=upper,
+    ),
     P1=P1,
     P2=P2,
     thickness=1.0e-3,
 )
-
-def to_physical(geom: BezierGeometry) -> BezierGeometry:
-    cp_phys = lower + (upper - lower) * jax.nn.sigmoid(geom.control_point)
-    geom = eqx.tree_at(lambda g: g.control_point, geom, cp_phys)
-    geom = eqx.tree_at(lambda g: (g.P1, g.P2), geom, (P1, P2))
-    return geom
 
 # ---------------------------------------------------------------------------
 # 3.  Baseline (free-field) target simulation
@@ -112,8 +103,7 @@ roi_mask = rectangular_roi(
 loss_obj = RoiMseLoss(target_field, roi_mask) + 10.0 * IntersectionPenalty(source_binary)
 
 
-def loss_fn(latent_geom: BezierGeometry):
-    geom = to_physical(latent_geom)
+def loss_fn(geom):
     p_max = run_simulation(geom.as_medium(cfg), cfg, source)
     mask = geom(cfg.X, cfg.R)
     return loss_obj(p_max, mask)
@@ -131,8 +121,8 @@ result = run_optimization(
     log_every=5,
 )
 
-final_geometry = to_physical(result.model)
-print(f"\nOptimal control point: {final_geometry.control_point * 1e3} mm")
+final_geometry = cast(BezierGeometry, result.model)
+print(f"\nOptimal control point: {final_geometry.control_point.value * 1e3} mm")
 
 # ---------------------------------------------------------------------------
 # 6.  Final simulation
@@ -159,8 +149,16 @@ ax.contour(x*1e3, r*1e3, final_shape.T, levels=[0.5], colors="white", linewidths
 ax.contour(x*1e3, -r*1e3, final_shape.T, levels=[0.5], colors="white", linewidths=1.5)
 ax.contour(x*1e3, r*1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5)
 ax.contour(x*1e3, -r*1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5)
-ax.plot(final_geometry.control_point[0]*1e3, final_geometry.control_point[1]*1e3, 'wx')
-ax.plot(final_geometry.control_point[0]*1e3, -final_geometry.control_point[1]*1e3, 'wx')
+ax.plot(
+    final_geometry.control_point.value[0] * 1e3,
+    final_geometry.control_point.value[1] * 1e3,
+    "wx",
+)
+ax.plot(
+    final_geometry.control_point.value[0] * 1e3,
+    -final_geometry.control_point.value[1] * 1e3,
+    "wx",
+)
 fig.colorbar(im, ax=ax, label="Peak Pressure [MPa]")
 ax.set_title("a)")
 ax.set_xlabel("Axial Position [mm]")
@@ -177,8 +175,7 @@ ax.legend()
 
 # c) Control point trajectory
 ax = axes[2]
-physical_history = [to_physical(m) for m in result.model_history]
-cps = jnp.stack([m.control_point for m in physical_history]) * 1e3
+cps = jnp.stack([cast(BezierGeometry, m).control_point.value for m in result.model_history]) * 1e3
 sc = ax.scatter(cps[:, 0], cps[:, 1], c=jnp.arange(len(cps)), cmap="plasma", s=10)
 ax.plot(cps[0, 0], cps[0, 1], 'gs', label="Initial")
 ax.plot(cps[-1, 0], cps[-1, 1], 'r*', label="Final")
