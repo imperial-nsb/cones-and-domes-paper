@@ -1,7 +1,4 @@
 """
-paper/figure3/plot_holography.py
-=====================================
-
 Optimisation of RBF and Spline lens geometries to maximise focal
 pressure at the focus of an H-117-style transducer.
 
@@ -19,6 +16,7 @@ from jaxisymmetric.geometry import RbfGeometry, SplineGeometry
 from jaxisymmetric.loss import FocalPressureLoss, IntersectionPenalty, rectangular_roi
 from jaxisymmetric.sources import make_holography_source
 from jaxisymmetric.train import run_optimization
+from matplotlib.animation import FFMpegWriter, FuncAnimation
 from scipy.io import loadmat
 
 # ---------------------------------------------------------------------------
@@ -126,7 +124,7 @@ geometry_spline = SplineGeometry(
 def loss_fn_spline(geom):
     p_max = run_simulation(geom.as_medium(cfg), cfg, source)
     mask = geom(cfg.X, cfg.R)
-    return loss_obj(p_max, mask)
+    return loss_obj(p_max, mask), p_max
 
 
 print("Running Spline optimisation...")
@@ -137,6 +135,7 @@ result_spline = run_optimization(
     opt=optax.adam(0.2),
     verbose=True,
     log_every=5,
+    has_aux=True,
 )
 final_geometry_spline = result_spline.geometry
 final_shape_spline = final_geometry_spline(cfg.X, cfg.R)
@@ -180,7 +179,7 @@ geometry_rbf = RbfGeometry(
 def loss_fn_rbf(geom):
     p_max = run_simulation(geom.as_medium(cfg), cfg, source)
     mask = geom(cfg.X, cfg.R)
-    return loss_obj(p_max, mask)
+    return loss_obj(p_max, mask), p_max
 
 print("Running RBF optimisation...")
 result_rbf = run_optimization(
@@ -190,73 +189,177 @@ result_rbf = run_optimization(
     opt=optax.adam(0.3),
     verbose=True,
     log_every=5,
+    has_aux=True,
 )
 final_geometry_rbf = result_rbf.geometry
 final_shape_rbf = final_geometry_rbf(cfg.X, cfg.R)
 final_field_rbf = jax.jit(run_simulation)(final_geometry_rbf.as_medium(cfg), cfg, source)
 
 # ---------------------------------------------------------------------------
-# 5.  Plotting
+# 5.  Animation
 # ---------------------------------------------------------------------------
+print("Collecting fields for animation...")
+
+# Reuse fields recorded during training — no recomputation needed
+assert result_spline.aux_history is not None
+assert result_rbf.aux_history is not None
+frame_indices = list(range(len(result_spline.geometry_history)))
+field_hist_spline = result_spline.aux_history
+field_hist_rbf = result_rbf.aux_history
+
 fig, axes = plt.subplots(1, 4, figsize=(16, 4))
 OUT = Path(__file__).resolve().parent
-extent = [cfg.X[0,0]*1e3, cfg.X[-1,0]*1e3, cfg.R[0,-1]*1e3, cfg.R[0,0]*1e3]
-
-# e) Final acoustic field with RBF
-ax = axes[0]
 r = cfg.r
 x = jnp.arange(Nx) * dx
 full_r = jnp.concatenate([-r[1:][::-1], r])
 extent = [x[0]*1e3, x[-1]*1e3, full_r[-1]*1e3, full_r[0]*1e3]
 
-field_full_rbf = jnp.concatenate([final_field_rbf[:, 1:][:, ::-1], final_field_rbf], axis=1)
-im = ax.imshow(field_full_rbf.T / 1e6, extent=extent, cmap="magma", origin="upper", aspect="auto")
-ax.contour(x*1e3, r*1e3, final_shape_rbf.T, levels=[0.5], colors="white", linewidths=1.5)
-ax.contour(x*1e3, -r*1e3, final_shape_rbf.T, levels=[0.5], colors="white", linewidths=1.5)
-ax.contour(x*1e3, r*1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5)
-ax.contour(x*1e3, -r*1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5)
-fig.colorbar(im, ax=ax, label="Peak Pressure [MPa]")
-ax.set_title("e)")
-ax.set_xlabel("Axial Position [mm]")
-ax.set_ylabel("Radial Position [mm]")
+# Initial frames setup with scaling to final frame
+vmax = max(jnp.max(field_hist_rbf[-1]), jnp.max(field_hist_spline[-1])) / 1e6
+pmax_axial = (
+    max(jnp.max(field_hist_rbf[-1][:, 0]), jnp.max(field_hist_spline[-1][:, 0])) / 1e6
+)
 
-# f) Final acoustic field with Spline
-ax = axes[1]
-field_full_spline = jnp.concatenate([final_field_spline[:, 1:][:, ::-1], final_field_spline], axis=1)
-im2 = ax.imshow(field_full_spline.T / 1e6, extent=extent, cmap="magma", origin="upper", aspect="auto")
-ax.contour(x*1e3, r*1e3, final_shape_spline.T, levels=[0.5], colors="white", linewidths=1.5)
-ax.contour(x*1e3, -r*1e3, final_shape_spline.T, levels=[0.5], colors="white", linewidths=1.5)
-ax.contour(x*1e3, r*1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5)
-ax.contour(x*1e3, -r*1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5)
-fig.colorbar(im2, ax=ax, label="Peak Pressure [MPa]")
-ax.set_title("f)")
-ax.set_xlabel("Axial Position [mm]")
-ax.set_ylabel("Radial Position [mm]")
+# e) RBF field
+ax_rbf = axes[0]
+field_full_rbf_0 = jnp.concatenate(
+    [field_hist_rbf[0][:, 1:][:, ::-1], field_hist_rbf[0]], axis=1
+)
+im_rbf = ax_rbf.imshow(
+    field_full_rbf_0.T / 1e6,
+    extent=extent,
+    cmap="magma",
+    origin="upper",
+    aspect="auto",
+    vmax=vmax,
+)
+fig.colorbar(im_rbf, ax=ax_rbf, label="Peak Pressure [MPa]")
+cnt_rbf_up = [None]
+cnt_rbf_lo = [None]
+ax_rbf.contour(
+    x * 1e3, r * 1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5
+)
+ax_rbf.contour(
+    x * 1e3, -r * 1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5
+)
+ax_rbf.set_title("e) RBF")
+ax_rbf.set_xlabel("Axial Position [mm]")
+ax_rbf.set_ylabel("Radial Position [mm]")
 
-# g) Axial profile comparison
-ax = axes[2]
-ax.plot(cfg.X[:, 0]*1e3, target_field[:, 0] / 1e6, label="Free-Field", color="k")
-ax.plot(cfg.X[:, 0]*1e3, final_field_spline[:, 0] / 1e6, label="Spline", color="b", linestyle="--")
-ax.plot(cfg.X[:, 0]*1e3, final_field_rbf[:, 0] / 1e6, label="RBF", color="r", linestyle="-.")
-ax.axvline(82.5, color='g', linestyle=':', label="ROI")
-ax.axvline(87.5, color='g', linestyle=':')
-ax.set_title("g)")
-ax.set_xlabel("Axial Position [mm]")
-ax.set_ylabel("Peak Pressure [MPa]")
-ax.legend()
+# f) Spline field
+ax_spline = axes[1]
+field_full_spline_0 = jnp.concatenate(
+    [field_hist_spline[0][:, 1:][:, ::-1], field_hist_spline[0]], axis=1
+)
+im_spline = ax_spline.imshow(
+    field_full_spline_0.T / 1e6,
+    extent=extent,
+    cmap="magma",
+    origin="upper",
+    aspect="auto",
+    vmax=vmax,
+)
+fig.colorbar(im_spline, ax=ax_spline, label="Peak Pressure [MPa]")
+cnt_spline_up = [None]
+cnt_spline_lo = [None]
+ax_spline.contour(
+    x * 1e3, r * 1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5
+)
+ax_spline.contour(
+    x * 1e3, -r * 1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5
+)
+ax_spline.set_title("f) Spline")
+ax_spline.set_xlabel("Axial Position [mm]")
+ax_spline.set_ylabel("Radial Position [mm]")
 
-# h) Mean ROI peak pressure histories
-ax = axes[3]
-loss_spline = -jnp.array(result_spline.loss_history) / 1e6
-loss_rbf = -jnp.array(result_rbf.loss_history) / 1e6
-ax.plot(loss_spline, label=f"Spline (final = {loss_spline[-1]:.2f})", color="b")
-ax.plot(loss_rbf, label=f"RBF (final = {loss_rbf[-1]:.2f})", color="r")
-ax.set_title("h)")
-ax.set_xlabel("Optimisation Step")
-ax.set_ylabel("Mean ROI peak pressure [MPa]")
-ax.legend()
+# g) Axial profile
+ax_p = axes[2]
+ax_p.plot(cfg.X[:, 0] * 1e3, target_field[:, 0] / 1e6, label="Free-Field", color="k")
+(line_spline,) = ax_p.plot([], [], label="Spline", color="b", linestyle="--")
+(line_rbf,) = ax_p.plot([], [], label="RBF", color="r", linestyle="-.")
+ax_p.axvline(82.5, color="g", linestyle=":", label="ROI")
+ax_p.axvline(87.5, color="g", linestyle=":")
+ax_p.set_title("g)")
+ax_p.set_xlabel("Axial Position [mm]")
+ax_p.set_ylabel("Peak Pressure [MPa]")
+ax_p.set_ylim(0, pmax_axial * 1.1)
+ax_p.legend()
+
+# h) Pressure histories
+ax_h = axes[3]
+hist_spline_full = -jnp.array(result_spline.loss_history) / 1e6
+hist_rbf_full = -jnp.array(result_rbf.loss_history) / 1e6
+ax_h.plot(hist_spline_full, color="b", alpha=0.3)
+ax_h.plot(hist_rbf_full, color="r", alpha=0.3)
+(line_h_spline,) = ax_h.plot([], [], label="Spline", color="b")
+(line_h_rbf,) = ax_h.plot([], [], label="RBF", color="r")
+ax_h.set_title("h)")
+ax_h.set_xlabel("Optimisation Step")
+ax_h.set_ylabel("Mean ROI Peak Pressure [MPa]")
+ax_h.legend()
 
 plt.tight_layout()
-plt.savefig(str(OUT / "fig3_holography.pdf"), format="pdf")
-plt.savefig(str(OUT / "fig3_holography.png"), format="png", dpi=300)
+
+
+def update(frame_idx):
+    f_spline = field_hist_spline[frame_idx]
+    f_rbf = field_hist_rbf[frame_idx]
+    g_spline = result_spline.geometry_history[frame_idx]
+    g_rbf = result_rbf.geometry_history[frame_idx]
+
+    # Update fields
+    field_full_rbf = jnp.concatenate([f_rbf[:, 1:][:, ::-1], f_rbf], axis=1)
+    im_rbf.set_data(field_full_rbf.T / 1e6)
+
+    field_full_spline = jnp.concatenate([f_spline[:, 1:][:, ::-1], f_spline], axis=1)
+    im_spline.set_data(field_full_spline.T / 1e6)
+
+    # Update contours
+    for c in [cnt_rbf_up[0], cnt_rbf_lo[0], cnt_spline_up[0], cnt_spline_lo[0]]:
+        if c is not None:
+            c.remove()
+
+    shape_rbf = g_rbf(cfg.X, cfg.R)
+    cnt_rbf_up[0] = ax_rbf.contour(
+        x * 1e3, r * 1e3, shape_rbf.T, levels=[0.5], colors="white", linewidths=1.5
+    )
+    cnt_rbf_lo[0] = ax_rbf.contour(
+        x * 1e3, -r * 1e3, shape_rbf.T, levels=[0.5], colors="white", linewidths=1.5
+    )
+
+    shape_spline = g_spline(cfg.X, cfg.R)
+    cnt_spline_up[0] = ax_spline.contour(
+        x * 1e3, r * 1e3, shape_spline.T, levels=[0.5], colors="white", linewidths=1.5
+    )
+    cnt_spline_lo[0] = ax_spline.contour(
+        x * 1e3, -r * 1e3, shape_spline.T, levels=[0.5], colors="white", linewidths=1.5
+    )
+
+    # Update axial profiles
+    line_spline.set_data(cfg.X[:, 0] * 1e3, f_spline[:, 0] / 1e6)
+    line_rbf.set_data(cfg.X[:, 0] * 1e3, f_rbf[:, 0] / 1e6)
+
+    # Update history lines
+    line_h_spline.set_data(jnp.arange(frame_idx + 1), hist_spline_full[: frame_idx + 1])
+    line_h_rbf.set_data(jnp.arange(frame_idx + 1), hist_rbf_full[: frame_idx + 1])
+
+    return [im_rbf, im_spline, line_spline, line_rbf, line_h_spline, line_h_rbf]
+
+
+filename = "rbf+spline_learning"
+
+ani = FuncAnimation(fig, update, frames=len(frame_indices), blit=False)
+writer = FFMpegWriter(fps=10)
+ani_path = str(OUT / f"{filename}.mp4")
+print(f"Saving animation to {ani_path}...")
+ani.save(ani_path, writer=writer)
+
+ani_path_gif = str(OUT / f"{filename}.gif")
+print(f"Saving animation to {ani_path_gif}...")
+ani.save(ani_path_gif, writer="pillow", fps=10)
+
+# Final save
+update(len(frame_indices) - 1)
+plt.savefig(str(OUT / f"{filename}.pdf"), format="pdf")
+plt.savefig(str(OUT / f"{filename}.png"), format="png", dpi=300)
 print(f"Saved plots to {OUT}")

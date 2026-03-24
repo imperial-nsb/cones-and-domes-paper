@@ -1,7 +1,4 @@
 """
-paper/figure3/plot_bezier.py
-=====================================
-
 Optimisation of a Bézier-curve lens geometry to match a reference (free-field)
 acoustic pressure distribution at the focus of an H-117-style transducer.
 
@@ -19,6 +16,7 @@ from jaxisymmetric.geometry import BezierGeometry
 from jaxisymmetric.loss import IntersectionPenalty, RoiMseLoss, rectangular_roi
 from jaxisymmetric.sources import make_holography_source
 from jaxisymmetric.train import run_optimization
+from matplotlib.animation import FFMpegWriter, FuncAnimation
 from scipy.io import loadmat
 
 # ---------------------------------------------------------------------------
@@ -105,7 +103,7 @@ loss_obj = RoiMseLoss(target_field, roi_mask) + 10.0 * IntersectionPenalty(sourc
 def loss_fn(geom):
     p_max = run_simulation(geom.as_medium(cfg), cfg, source)
     mask = geom(cfg.X, cfg.R)
-    return loss_obj(p_max, mask)
+    return loss_obj(p_max, mask), p_max
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +116,7 @@ result = run_optimization(
     opt=optax.adam(0.1),
     verbose=True,
     log_every=5,
+    has_aux=True,
 )
 
 final_geometry = result.geometry
@@ -130,69 +129,158 @@ final_shape = final_geometry(cfg.X, cfg.R)
 final_field = jax.jit(run_simulation)(final_geometry.as_medium(cfg), cfg, source)
 
 # ---------------------------------------------------------------------------
-# 7.  Plotting
+# 7.  Animation
 # ---------------------------------------------------------------------------
+print("Collecting fields for animation...")
+
+# We only animate every 5th step to keep it snappy, plus the final one
+frame_indices = list(range(0, len(result.geometry_history), 2))
+if (len(result.geometry_history) - 1) not in frame_indices:
+    frame_indices.append(len(result.geometry_history) - 1)
+
+assert result.aux_history is not None
+field_history = [result.aux_history[i] for i in frame_indices]
+geom_history = [result.geometry_history[i] for i in frame_indices]
+loss_history_subset = [result.loss_history[i] for i in frame_indices]
+
 fig, axes = plt.subplots(1, 4, figsize=(16, 4))
 OUT = Path(__file__).resolve().parent
 
-# a) Final acoustic field with geometry
-ax = axes[0]
+# Set up constant stuff
 r = cfg.r
 x = jnp.arange(Nx) * dx
 full_r = jnp.concatenate([-r[1:][::-1], r])
-extent = [x[0]*1e3, x[-1]*1e3, full_r[-1]*1e3, full_r[0]*1e3]
-field_full = jnp.concatenate([final_field[:, 1:][:, ::-1], final_field], axis=1)
+extent = [x[0] * 1e3, x[-1] * 1e3, full_r[-1] * 1e3, full_r[0] * 1e3]
 
-im = ax.imshow(field_full.T / 1e6, extent=extent, cmap="magma", origin="upper", aspect="auto")
-ax.contour(x*1e3, r*1e3, final_shape.T, levels=[0.5], colors="white", linewidths=1.5)
-ax.contour(x*1e3, -r*1e3, final_shape.T, levels=[0.5], colors="white", linewidths=1.5)
-ax.contour(x*1e3, r*1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5)
-ax.contour(x*1e3, -r*1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5)
-ax.plot(
-    final_geometry.control_point.value[0] * 1e3,
-    final_geometry.control_point.value[1] * 1e3,
-    "wx",
-)
-ax.plot(
-    final_geometry.control_point.value[0] * 1e3,
-    -final_geometry.control_point.value[1] * 1e3,
-    "wx",
-)
-fig.colorbar(im, ax=ax, label="Peak Pressure [MPa]")
-ax.set_title("a)")
-ax.set_xlabel("Axial Position [mm]")
-ax.set_ylabel("Radial Position [mm]")
+# Initial frame setup with scaling to final frame
+final_field_max = jnp.max(field_history[-1]) / 1e6
+axial_max = jnp.max(field_history[-1][:, 0]) / 1e6
 
-# b) Axial profile comparison
-ax = axes[1]
-ax.plot(cfg.X[:, 0]*1e3, target_field[:, 0] / 1e6, label="Free-Field", color="C0")
-ax.plot(cfg.X[:, 0]*1e3, final_field[:, 0] / 1e6, label="Optimised", color="C1", linestyle="--")
-ax.set_title("b)")
-ax.set_xlabel("Axial Position [mm]")
-ax.set_ylabel("Peak Pressure [MPa]")
-ax.legend()
+ax_f = axes[0]
+field_full_0 = jnp.concatenate(
+    [field_history[0][:, 1:][:, ::-1], field_history[0]], axis=1
+)
+im = ax_f.imshow(
+    field_full_0.T / 1e6,
+    extent=extent,
+    cmap="magma",
+    origin="upper",
+    aspect="auto",
+    vmax=final_field_max,
+)
+cbar = fig.colorbar(im, ax=ax_f, label="Peak Pressure [MPa]")
+
+# Prepare contours and plots for animation update
+cnt_up = [None] * 2
+cnt_lo = [None] * 2
+src_up = ax_f.contour(
+    x * 1e3, r * 1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5
+)
+src_lo = ax_f.contour(
+    x * 1e3, -r * 1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5
+)
+pt_w = ax_f.plot([], [], "wx")[0]
+pt_w_mirr = ax_f.plot([], [], "wx")[0]
+
+ax_f.set_title("a)")
+ax_f.set_xlabel("Axial Position [mm]")
+ax_f.set_ylabel("Radial Position [mm]")
+
+# b) Axial profile
+ax_p = axes[1]
+ax_p.plot(cfg.X[:, 0] * 1e3, target_field[:, 0] / 1e6, label="Free-Field", color="C0")
+(line_opt,) = ax_p.plot([], [], label="Optimised", color="C1", linestyle="--")
+ax_p.set_title("b)")
+ax_p.set_xlabel("Axial Position [mm]")
+ax_p.set_ylabel("Peak Pressure [MPa]")
+ax_p.set_ylim(0, axial_max * 1.1)
+ax_p.legend()
 
 # c) Control point trajectory
-ax = axes[2]
-cps = jnp.stack([m.control_point.value for m in result.geometry_history]) * 1e3
-sc = ax.scatter(cps[:, 0], cps[:, 1], c=jnp.arange(len(cps)), cmap="plasma", s=10)
-ax.plot(cps[0, 0], cps[0, 1], 'gs', label="Initial")
-ax.plot(cps[-1, 0], cps[-1, 1], 'r*', label="Final")
-fig.colorbar(sc, ax=ax, label="Optimisation Step")
-ax.set_title("c)")
-ax.set_xlabel("Control Point Axial Position [mm]")
-ax.set_ylabel("Control Point Radial Position [mm]")
-ax.legend()
+ax_t = axes[2]
+cps_all = jnp.stack([m.control_point.value for m in result.geometry_history]) * 1e3
+sc = ax_t.scatter(
+    cps_all[:, 0],
+    cps_all[:, 1],
+    c=jnp.arange(len(cps_all)),
+    cmap="plasma",
+    s=10,
+    alpha=0.3,
+)
+ax_t.plot(cps_all[0, 0], cps_all[0, 1], "gs", label="Initial")
+(pt_current,) = ax_t.plot([], [], "r*", label="Current")
+fig.colorbar(sc, ax=ax_t, label="Optimisation Step")
+ax_t.set_title("c)")
+ax_t.set_xlabel("Axial Position [mm]")
+ax_t.set_ylabel("Radial Position [mm]")
+ax_t.legend()
 
 # d) Loss curve
-ax = axes[3]
-ax.plot(result.loss_history)
-ax.set_yscale('log')
-ax.set_title("d)")
-ax.set_xlabel("Optimisation Step")
-ax.set_ylabel("Loss (log scale)")
+ax_l = axes[3]
+ax_l.plot(result.loss_history, alpha=0.3)
+(line_loss,) = ax_l.plot([], [], color="C0")
+ax_l.set_yscale("log")
+ax_l.set_title("d)")
+ax_l.set_xlabel("Optimisation Step")
+ax_l.set_ylabel("Loss")
 
 plt.tight_layout()
-plt.savefig(str(OUT / "fig3_bezier.pdf"), format="pdf")
-plt.savefig(str(OUT / "fig3_bezier.png"), format="png", dpi=300)
+
+
+def update(frame_idx):
+    f = field_history[frame_idx]
+    g = geom_history[frame_idx]
+    step_idx = frame_indices[frame_idx]
+
+    # Update field
+    field_full = jnp.concatenate([f[:, 1:][:, ::-1], f], axis=1)
+    im.set_data(field_full.T / 1e6)
+
+    # Update geometry contours (clear and redraw)
+    for c in cnt_up + cnt_lo:
+        if c is not None:
+            c.remove()
+
+    shape = g(cfg.X, cfg.R)
+    cnt_up[0] = ax_f.contour(
+        x * 1e3, r * 1e3, shape.T, levels=[0.5], colors="white", linewidths=1.5
+    )
+    cnt_lo[0] = ax_f.contour(
+        x * 1e3, -r * 1e3, shape.T, levels=[0.5], colors="white", linewidths=1.5
+    )
+
+    # Update points
+    cp = g.control_point.value * 1e3
+    pt_w.set_data([cp[0]], [cp[1]])
+    pt_w_mirr.set_data([cp[0]], [-cp[1]])
+
+    # Update axial profile
+    line_opt.set_data(cfg.X[:, 0] * 1e3, f[:, 0] / 1e6)
+
+    # Update trajectory current point
+    pt_current.set_data([cp[0]], [cp[1]])
+
+    # Update loss curve progress
+    line_loss.set_data(jnp.arange(step_idx + 1), result.loss_history[: step_idx + 1])
+
+    return [im, pt_w, pt_w_mirr, line_opt, pt_current, line_loss]
+
+
+filename = "bezier_learning"
+
+ani = FuncAnimation(fig, update, frames=len(field_history), blit=False)
+writer = FFMpegWriter(fps=10)
+ani_path = str(OUT / f"{filename}.mp4")
+print(f"Saving animation to {ani_path}...")
+ani.save(ani_path, writer=writer)
+
+ani_path_gif = str(OUT / f"{filename}.gif")
+print(f"Saving animation to {ani_path_gif}...")
+ani.save(ani_path_gif, writer="pillow", fps=10)
+
+# Final save as before
+final_idx = len(field_history) - 1
+update(final_idx)  # Ensure plots show final state
+plt.savefig(str(OUT / f"{filename}.pdf"), format="pdf")
+plt.savefig(str(OUT / f"{filename}.png"), format="png", dpi=300)
 print(f"Saved plots to {OUT}")
