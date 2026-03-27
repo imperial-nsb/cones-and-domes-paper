@@ -22,6 +22,8 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+mpl.rcParams['svg.fonttype'] = 'none'
 from jax import device_put
 from jaxisymmetric import SimConfig, Source, run_simulation
 from jaxisymmetric.geometry import FixedGeometry
@@ -171,6 +173,8 @@ OUT = Path(__file__).resolve().parent
 
 plt.tight_layout()
 plt.savefig(str(OUT / "c103_comparison.pdf"), format="pdf")
+
+
 plt.savefig(str(OUT / "c103_comparison.svg"), format="svg")
 plt.show()
 print(f"Figure saved to {OUT / 'c103_comparison.pdf'}")

@@ -21,6 +21,8 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+mpl.rcParams['svg.fonttype'] = 'none'
 from jax import device_put
 from jaxisymmetric import SimConfig, Source, run_simulation
 from jaxisymmetric.sources import make_focused_bowl_source

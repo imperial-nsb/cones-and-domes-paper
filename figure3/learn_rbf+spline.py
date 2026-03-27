@@ -10,6 +10,8 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+mpl.rcParams['svg.fonttype'] = 'none'
 import optax
 from jaxisymmetric import BoundedParam, SimConfig, Source, run_simulation
 from jaxisymmetric.geometry import RbfGeometry, SplineGeometry
@@ -206,10 +208,10 @@ frame_indices = list(range(len(result_spline.geometry_history)))
 field_hist_spline = result_spline.aux_history
 field_hist_rbf = result_rbf.aux_history
 
-fig, axes = plt.subplots(1, 4, figsize=(16, 4))
+fig, axes = plt.subplots(1, 4, figsize=(20, 4))
 OUT = Path(__file__).resolve().parent
 r = cfg.r
-x = jnp.arange(Nx) * dx
+x = jnp.arange(Nx) * dx - zpos
 full_r = jnp.concatenate([-r[1:][::-1], r])
 extent = [x[0]*1e3, x[-1]*1e3, full_r[-1]*1e3, full_r[0]*1e3]
 
@@ -361,4 +363,5 @@ ani.save(ani_path_gif, writer="pillow", fps=10)
 update(len(frame_indices) - 1)
 plt.savefig(str(OUT / f"{filename}.pdf"), format="pdf")
 plt.savefig(str(OUT / f"{filename}.png"), format="png", dpi=300)
+plt.savefig(str(OUT / f"{filename}.svg"), format="svg")
 print(f"Saved plots to {OUT}")
