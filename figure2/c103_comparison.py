@@ -138,24 +138,32 @@ print(f"Max Pressure: JAXisymmetric: {jnp.max(jax_clean):.2f}, k-Wave: {jnp.max(
 fig, axes = plt.subplots(3, 1, figsize=(8, 12), sharex=True)
 
 
-def plot_panel(ax, data, title, is_diff=False):
+def plot_sim(ax, data, title, cmap='viridis', is_diff=False):
+    # We transpose 'data' to match MATLAB's imagesc behavior with (x, r) axes
     val = 100 * data if is_diff else data
+    
+    # Use the 'cmap' variable here instead of the hardcoded string
     im = ax.imshow(
-        val.T,
-        extent=[x_vec[0], x_vec[-1], r_vec[0], r_vec[-1]],
-        origin="lower",
-        aspect="equal",
-        cmap="viridis",
-    )
-    ax.contour(x_vec, r_vec, mask_full.T, levels=[0.5], colors="w", linewidths=1)
+        val.T, 
+        extent=[x_vec[0], x_vec[-1], r_vec[0], r_vec[-1]], 
+        origin='lower', 
+        aspect='equal', 
+        cmap=cmap)
+    
+    # Overlay Contour (Mask)
+    ax.contour(x_vec, r_vec, mask_full.T, levels=[0.5], colors='w', linewidths=1)
+    
     ax.set_title(title)
-    ax.set_ylabel("Radial Position [mm]")
+    ax.set_ylabel('Radial Position [mm]')
+    
+    # Note: Ensure 'fig' is defined in your outer scope or passed in
     fig.colorbar(im, ax=ax)
 
+plot_sim(axes[0], 1e-6 * jax_sim, 'd) JAXisymmetric Pressure [MPa]', cmap='viridis')
+plot_sim(axes[1], 1e-6 * kwave_sim, 'e) k-Wave Pressure [MPa]', cmap='viridis')
+plot_sim(axes[2], difference_norm, 'f) Normalised Difference [%]', cmap='gist_gray', is_diff=True)
 
-plot_panel(axes[0], jax_sim, "d) JAXisymmetric Pressure [MPa]")
-plot_panel(axes[1], kwave_sim, "e) k-Wave Pressure [MPa]")
-plot_panel(axes[2], difference_norm, "f) Normalised Difference [%]", is_diff=True)
+
 
 axes[2].set_xlabel("Axial Position [mm]")
 
