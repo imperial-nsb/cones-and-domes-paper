@@ -24,8 +24,8 @@ from scipy.io import loadmat
 # ---------------------------------------------------------------------------
 # 1.  Grid and simulation config
 # ---------------------------------------------------------------------------
-Nx, Nr = 256, 128
-dx = dr = 0.5e-3
+Nx, Nr = 512, 256
+dx = dr = 0.25e-3
 c0, rho0 = 1500.0, 1000.0
 source_freq = 0.3e6
 
@@ -61,10 +61,11 @@ target_field = jax.jit(run_simulation)(cfg.homogeneous_medium(), cfg, source)
 target_field.block_until_ready()
 print("  baseline done.\n")
 
+focus_x = zpos + 60e-3
 roi_mask = rectangular_roi(
     cfg.X,
     cfg.R,
-    focus_x=85e-3,
+    focus_x=focus_x,
     focus_r=0.0,
     size_x=5e-3,
     size_r=2e-3,
@@ -73,7 +74,7 @@ roi_mask = rectangular_roi(
 loss_obj = FocalPressureLoss(roi_mask) + 10.0 * IntersectionPenalty(source_binary)
 
 P1 = jnp.array([zpos - 0.5e-3, rpos + 2e-3])
-P6_x_fixed = zpos + 48e-3
+P6_x_fixed = zpos + 38e-3
 
 # Degenerate bounds (lower == upper) pin fixed coordinates with zero gradient:
 #   row 0      → P1 fully fixed
@@ -81,20 +82,20 @@ P6_x_fixed = zpos + 48e-3
 spline_lower = jnp.array(
     [
         P1,
-        [zpos + 5e-3, 2e-3],
-        [zpos + 16e-3, 2e-3],
-        [zpos + 26e-3, 2e-3],
-        [zpos + 35e-3, 2e-3],
+        [zpos + 2e-3, 2e-3],
+        [zpos + 10e-3, 2e-3],
+        [zpos + 18e-3, 2e-3],
+        [zpos + 28e-3, 2e-3],
         [P6_x_fixed, 2e-3],
     ]
 )
 spline_upper = jnp.array(
     [
         P1,
-        [zpos + 15e-3, 60e-3],
-        [zpos + 25e-3, 60e-3],
-        [zpos + 35e-3, 60e-3],
-        [zpos + 46e-3, 60e-3],
+        [zpos + 8e-3, 60e-3],
+        [zpos + 17e-3, 60e-3],
+        [zpos + 27e-3, 60e-3],
+        [zpos + 36e-3, 60e-3],
         [P6_x_fixed, 20e-3],
     ]
 )
@@ -102,17 +103,17 @@ spline_upper = jnp.array(
 initial_cps_physical = jnp.array(
     [
         P1,
-        [zpos + 10e-3, 40e-3],
-        [zpos + 20e-3, 30e-3],
-        [zpos + 30e-3, 20e-3],
-        [zpos + 40e-3, 10e-3],
+        [zpos + 8e-3, 40e-3],
+        [zpos + 17e-3, 30e-3],
+        [zpos + 27e-3, 20e-3],
+        [zpos + 36e-3, 10e-3],
         [P6_x_fixed, 10e-3],
     ]
 )
 
 geometry_spline = SplineGeometry(
     c=2500.0,
-    rho=1178.0,
+    rho=1200.0,
     control_points=BoundedParam.from_physical(
         initial_cps_physical,
         lower=spline_lower,
@@ -148,7 +149,7 @@ final_field_spline = jax.jit(run_simulation)(
 # 4.  RBF Optimisation
 # ---------------------------------------------------------------------------
 x_start = zpos - 0.5e-3
-x_end = zpos + 48e-3
+x_end = zpos + 38e-3
 r_start = rpos + 2e-3
 
 lower_rbf = jnp.array([0e-3, 2e-3, 2e-3, 2e-3, 2e-3])
@@ -156,8 +157,8 @@ upper_rbf = jnp.array([40e-3, 40e-3, 40e-3, 40e-3, 30e-3])
 lower_r_end = 0.5e-3
 upper_r_end = 20e-3
 
-initial_rbf_weights = jnp.array([30e-3, 25e-3, 20e-3, 15e-3, 10e-3])
-initial_r_end = 5.0e-3
+initial_rbf_weights = jnp.array([35e-3, 20e-3, 25e-3, 20e-3, 15e-3])
+initial_r_end = 10.0e-3
 
 geometry_rbf = RbfGeometry(
     c=2500.0,
@@ -231,7 +232,7 @@ im_rbf = ax_rbf.imshow(
     extent=extent,
     cmap="magma",
     origin="upper",
-    aspect="auto",
+    aspect="equal",
     vmax=vmax,
 )
 fig.colorbar(im_rbf, ax=ax_rbf, label="Peak Pressure [MPa]")
@@ -257,7 +258,7 @@ im_spline = ax_spline.imshow(
     extent=extent,
     cmap="magma",
     origin="upper",
-    aspect="auto",
+    aspect="equal",
     vmax=vmax,
 )
 fig.colorbar(im_spline, ax=ax_spline, label="Peak Pressure [MPa]")
@@ -275,11 +276,11 @@ ax_spline.set_ylabel("Radial Position [mm]")
 
 # g) Axial profile
 ax_p = axes[2]
-ax_p.plot(cfg.X[:, 0] * 1e3, target_field[:, 0] / 1e6, label="Free-Field", color="k")
+ax_p.plot(x * 1e3, target_field[:, 0] / 1e6, label="Free-Field", color="k")
 (line_spline,) = ax_p.plot([], [], label="Spline", color="b", linestyle="--")
 (line_rbf,) = ax_p.plot([], [], label="RBF", color="r", linestyle="-.")
-ax_p.axvline(82.5, color="g", linestyle=":", label="ROI")
-ax_p.axvline(87.5, color="g", linestyle=":")
+ax_p.axvline((focus_x - 2.5e-3 - zpos) * 1e3, color="g", linestyle=":", label="ROI")
+ax_p.axvline((focus_x + 2.5e-3 - zpos) * 1e3, color="g", linestyle=":")
 ax_p.set_title("g)")
 ax_p.set_xlabel("Axial Position [mm]")
 ax_p.set_ylabel("Peak Pressure [MPa]")
@@ -337,8 +338,8 @@ def update(frame_idx):
     )
 
     # Update axial profiles
-    line_spline.set_data(cfg.X[:, 0] * 1e3, f_spline[:, 0] / 1e6)
-    line_rbf.set_data(cfg.X[:, 0] * 1e3, f_rbf[:, 0] / 1e6)
+    line_spline.set_data(x * 1e3, f_spline[:, 0] / 1e6)
+    line_rbf.set_data(x * 1e3, f_rbf[:, 0] / 1e6)
 
     # Update history lines
     line_h_spline.set_data(jnp.arange(frame_idx + 1), hist_spline_full[: frame_idx + 1])
@@ -365,3 +366,25 @@ plt.savefig(str(OUT / f"{filename}.pdf"), format="pdf")
 plt.savefig(str(OUT / f"{filename}.png"), format="png", dpi=300)
 plt.savefig(str(OUT / f"{filename}.svg"), format="svg")
 print(f"Saved plots to {OUT}")
+
+
+# Save results to .npz file
+import numpy as np
+from datetime import datetime
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+output_file = f"figure3/optimize_maxP_spline_{timestamp}.npz"
+
+# Create results directory if it doesn't exist
+import os
+os.makedirs("figure3", exist_ok=True)
+
+np.savez(
+    output_file,
+    x=x,
+    dx=dx,
+    dr=dr,
+    final_mask=np.array(final_shape_spline > 0.5, dtype=np.float32),  
+)
+
+

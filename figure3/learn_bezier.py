@@ -5,7 +5,12 @@ acoustic pressure distribution at the focus of an H-117-style transducer.
 Produces snapshots and results used for Figure 03 panels (a-d).
 """
 
+from jax import config
+config.update("jax_enable_x64", False)
+
+
 from pathlib import Path
+
 
 import jax
 import jax.numpy as jnp
@@ -19,11 +24,13 @@ from jaxisymmetric.train import run_optimization
 from matplotlib.animation import FFMpegWriter, FuncAnimation
 from scipy.io import loadmat
 
+
+
 # ---------------------------------------------------------------------------
 # 1.  Grid and simulation config
 # ---------------------------------------------------------------------------
-Nx, Nr = 256, 128
-dx = dr = 0.5e-3
+Nx, Nr = 512, 256
+dx = dr = 0.25e-3
 c0, rho0 = 1500.0, 1000.0
 source_freq = 0.3e6
 
@@ -31,8 +38,7 @@ cfl = 0.1
 dt = cfl * dx / c0
 ramp_steps = round(3 * (1 / source_freq) / dt)
 
-# Transducer params (H-117 nominal focal area configuration)
-H117_FOCUS_X = 80e-3
+
 
 cfg = SimConfig(Nx=Nx, Nr=Nr, dx=dx, dr=dr, c0=c0, rho0=rho0, cfl=cfl)
 
@@ -42,6 +48,10 @@ radial_prof = jnp.array(rdata["radial_prof"]).squeeze()
 
 zpos = (Nx / 2) * dx - 40e-3
 rpos = 37e-3
+
+# Transducer params (H-117 nominal focal area configuration)
+H117_FOCUS_X = zpos + 60e-3; # focal length
+
 
 src_mask = make_holography_source(
     cfg,
@@ -57,9 +67,9 @@ source = Source(mask=src_mask, freq=source_freq, ramp_steps=ramp_steps)
 # 2.  Bézier definition
 # ---------------------------------------------------------------------------
 P1 = (zpos - 2e-3, rpos + 2e-3)
-P2 = (70e-3, 14.5e-3)
+P2 = (zpos + 38e-3, 16.5e-3)
 
-initial_cp = jnp.array([(P1[0] + P2[0]) / 2, (P2[1] + 2 * P1[1]) / 2])
+initial_cp = jnp.array([(P1[0] + P2[0]) / 2, (P2[1] + P1[1]) / 2])
 lower = jnp.array([P1[0], P2[1]])
 upper = jnp.array([P2[0], 2 * P1[1]])
 
@@ -164,7 +174,7 @@ im = ax_f.imshow(
     extent=extent,
     cmap="magma",
     origin="upper",
-    aspect="auto",
+    aspect="equal",
     vmax=final_field_max,
 )
 cbar = fig.colorbar(im, ax=ax_f, label="Peak Pressure [MPa]")
