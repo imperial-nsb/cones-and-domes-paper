@@ -11,6 +11,6 @@ _Geometry Optimisation Examples_
 **RBF + Spline** — optimised to maximise focal pressure:
 
 <p align="center">
-  <img src="figure3/rbf+splne_learning.gif" alt="RBF+Spline geometry learning" width="100%"/>
+  <img src="figure3/rbf+spline_learning.gif" alt="RBF+Spline geometry learning" width="100%"/>
 </p>
 
