@@ -157,7 +157,7 @@ OUT = Path(__file__).resolve().parent
 
 # Set up constant stuff
 r = cfg.r
-x = jnp.arange(Nx) * dx
+x = jnp.arange(Nx) * dx - zpos
 full_r = jnp.concatenate([-r[1:][::-1], r])
 extent = [x[0] * 1e3, x[-1] * 1e3, full_r[-1] * 1e3, full_r[0] * 1e3]
 
@@ -197,7 +197,7 @@ ax_f.set_ylabel("Radial Position [mm]")
 
 # b) Axial profile
 ax_p = axes[1]
-ax_p.plot(cfg.X[:, 0] * 1e3, target_field[:, 0] / 1e6, label="Free-Field", color="C0")
+ax_p.plot(x * 1e3, target_field[:, 0] / 1e6, label="Free-Field", color="C0")
 (line_opt,) = ax_p.plot([], [], label="Optimised", color="C1", linestyle="--")
 ax_p.set_title("b)")
 ax_p.set_xlabel("Axial Position [mm]")
@@ -207,7 +207,7 @@ ax_p.legend()
 
 # c) Control point trajectory
 ax_t = axes[2]
-cps_all = jnp.stack([m.control_point.value for m in result.geometry_history]) * 1e3
+cps_all = (jnp.stack([m.control_point.value for m in result.geometry_history]) - jnp.array([zpos, 0])) * 1e3
 sc = ax_t.scatter(
     cps_all[:, 0],
     cps_all[:, 1],
@@ -259,12 +259,12 @@ def update(frame_idx):
     )
 
     # Update points
-    cp = g.control_point.value * 1e3
+    cp = (g.control_point.value - jnp.array([zpos, 0])) * 1e3
     pt_w.set_data([cp[0]], [cp[1]])
     pt_w_mirr.set_data([cp[0]], [-cp[1]])
 
     # Update axial profile
-    line_opt.set_data(cfg.X[:, 0] * 1e3, f[:, 0] / 1e6)
+    line_opt.set_data(x * 1e3, f[:, 0] / 1e6)
 
     # Update trajectory current point
     pt_current.set_data([cp[0]], [cp[1]])
