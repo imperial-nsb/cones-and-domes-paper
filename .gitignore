@@ -61,7 +61,7 @@ examples/*.mp4
 examples/*.npz
 examples/*.npy
 *.png
-*.gif
+#*.gif
 *.mp4
 
 # Saved model / checkpoint files
