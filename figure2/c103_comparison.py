@@ -73,8 +73,8 @@ source = Source(mask=src_mask, freq=source_freq, ramp_steps=ramp_steps)
 cone = FixedGeometry.from_mat(
     cfg,
     mat_file_path=str("data/C103cone.mat"),
-    c=2750.0,
-    rho=1190.0,
+    c=2270.0,
+    rho=1200.0,
     mask_key="C103array2D",
     x_key="x_vec",
     y_key="y_vec",
