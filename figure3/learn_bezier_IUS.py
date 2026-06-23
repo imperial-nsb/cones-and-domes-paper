@@ -29,8 +29,8 @@ from scipy.io import loadmat
 # ---------------------------------------------------------------------------
 # 1.  Grid and simulation config
 # ---------------------------------------------------------------------------
-Nx, Nr = 512, 256
-dx = dr = 0.25e-3
+Nx, Nr = 256, 128
+dx = dr = 0.5e-3
 c0, rho0 = 1500.0, 1000.0
 source_freq = 0.3e6
 
@@ -67,7 +67,7 @@ source = Source(mask=src_mask, freq=source_freq, ramp_steps=ramp_steps)
 # 2.  Bézier definition
 # ---------------------------------------------------------------------------
 P1 = (zpos - 2e-3, rpos + 2e-3)
-P2 = (zpos + 38e-3, 16.5e-3)
+P2 = (zpos + 46e-3, 15e-3)
 
 initial_cp = jnp.array([(P1[0] + P2[0]) / 2, (P2[1] + P1[1]) / 2])
 lower = jnp.array([P1[0], P2[1]])
@@ -274,7 +274,7 @@ def update(frame_idx):
     return [im, pt_w, pt_w_mirr, line_opt, pt_current, line_loss]
 
 
-filename = "bezier_learning"
+filename = "bezier_learning_IUS"
 
 ani = FuncAnimation(fig, update, frames=len(field_history), blit=False)
 writer = FFMpegWriter(fps=10)
@@ -287,10 +287,122 @@ print(f"Saving animation to {ani_path_gif}...")
 ani.save(ani_path_gif, writer="pillow", fps=10)
 
 # Final save as before
-final_idx = len(field_history) - 1
-update(final_idx)  # Ensure plots show final state
+# ---------------------------------------------------------------------------
+# 8.  Final comparison figure
+# ---------------------------------------------------------------------------
+fig_final, axes_final = plt.subplots(2, 2, figsize=(12, 10))
+
+# Get initial and final geometries/fields
+first_geom = geom_history[0]
+final_geom = geom_history[-1]
+first_field = field_history[0]
+final_field = field_history[-1]
+
+# a) First geometry and field
+ax_a = axes_final[0, 0]
+first_shape = first_geom(cfg.X, cfg.R)
+field_full_first = jnp.concatenate([first_field[:, 1:][:, ::-1], first_field], axis=1)
+im_a = ax_a.imshow(
+    field_full_first.T / 1e6,
+    extent=extent,
+    cmap="magma",
+    origin="upper",
+    aspect="equal",
+    vmax=0.8,
+)
+ax_a.contour(x * 1e3, r * 1e3, first_shape.T, levels=[0.5], colors="white", linewidths=1.5)
+ax_a.contour(x * 1e3, -r * 1e3, first_shape.T, levels=[0.5], colors="white", linewidths=1.5)
+ax_a.contour(x * 1e3, r * 1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5)
+ax_a.contour(x * 1e3, -r * 1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5)
+
+# Plot fixed endpoints (P1 and P2) as white 'x' marks
+P1_rel = ((P1[0] - zpos) * 1e3, P1[1] * 1e3)
+P2_rel = ((P2[0] - zpos) * 1e3, P2[1] * 1e3)
+ax_a.plot([P1_rel[0]], [P1_rel[1]], "wx", markersize=6, markeredgewidth=2, label="fixed")
+ax_a.plot([P2_rel[0]], [P2_rel[1]], "wx", markersize=6, markeredgewidth=2)
+ax_a.plot([P1_rel[0]], [-P1_rel[1]], "wx", markersize=6, markeredgewidth=2)
+ax_a.plot([P2_rel[0]], [-P2_rel[1]], "wx", markersize=6, markeredgewidth=2)
+
+# Plot initial control point as green square
+first_cp = (first_geom.control_point.value - jnp.array([zpos, 0])) * 1e3
+ax_a.plot([first_cp[0]], [first_cp[1]], "gs", markersize=6, label="control")
+ax_a.plot([first_cp[0]], [-first_cp[1]], "gs", markersize=6)
+
+
+ax_a.set_title("a) Initial")
+ax_a.set_xlabel("Axial Position [mm]")
+ax_a.set_ylabel("Radial Position [mm]")
+fig_final.colorbar(im_a, ax=ax_a, label="Peak Pressure [MPa]")
+
+# b) Optimized geometry and field
+ax_b = axes_final[0, 1]
+final_shape = final_geom(cfg.X, cfg.R)
+field_full_final = jnp.concatenate([final_field[:, 1:][:, ::-1], final_field], axis=1)
+im_b = ax_b.imshow(
+    field_full_final.T / 1e6,
+    extent=extent,
+    cmap="magma",
+    origin="upper",
+    aspect="equal",
+    vmax=0.8,
+)
+ax_b.contour(x * 1e3, r * 1e3, final_shape.T, levels=[0.5], colors="white", linewidths=1.5)
+ax_b.contour(x * 1e3, -r * 1e3, final_shape.T, levels=[0.5], colors="white", linewidths=1.5)
+ax_b.contour(x * 1e3, r * 1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5)
+ax_b.contour(x * 1e3, -r * 1e3, source_binary.T, levels=[0.5], colors="cyan", linewidths=1.5)
+
+P1_rel = ((P1[0] - zpos) * 1e3, P1[1] * 1e3)
+P2_rel = ((P2[0] - zpos) * 1e3, P2[1] * 1e3)
+ax_b.plot([P1_rel[0]], [P1_rel[1]], "wx", markersize=6, markeredgewidth=2)
+ax_b.plot([P2_rel[0]], [P2_rel[1]], "wx", markersize=6, markeredgewidth=2)
+ax_b.plot([P1_rel[0]], [-P1_rel[1]], "wx", markersize=6, markeredgewidth=2)
+ax_b.plot([P2_rel[0]], [-P2_rel[1]], "wx", markersize=6, markeredgewidth=2)
+
+# Plot final control point as green square
+final_cp = (final_geom.control_point.value - jnp.array([zpos, 0])) * 1e3
+ax_b.plot([final_cp[0]], [final_cp[1]], "gs", markersize=6, label="Control Point")
+ax_b.plot([final_cp[0]], [-final_cp[1]], "gs", markersize=6)
+
+ax_b.set_title("b) Optimized")
+ax_b.set_xlabel("Axial Position [mm]")
+ax_b.set_ylabel("Radial Position [mm]")
+fig_final.colorbar(im_b, ax=ax_b, label="Peak Pressure [MPa]")
+
+# c) Axial profiles comparison
+ax_c = axes_final[1, 0]
+ax_c.plot(x * 1e3, target_field[:, 0] / 1e6, label="Free-Field", color="C0", linewidth=2)
+ax_c.plot(x * 1e3, first_field[:, 0] / 1e6, label="Initial", color="C2", linestyle="--", linewidth=2)
+ax_c.plot(x * 1e3, final_field[:, 0] / 1e6, label="Optimized", color="C1", linestyle="-.", linewidth=2)
+ax_c.set_title("c) Axial Profiles")
+ax_c.set_xlabel("Axial Position [mm]")
+ax_c.set_ylabel("Peak Pressure [MPa]")
+ax_c.set_ylim(0, 1.0)
+ax_c.legend()
+ax_c.grid(True, alpha=0.3)
+
+# d) Control point trajectory
+ax_d = axes_final[1, 1]
+sc = ax_d.scatter(
+    cps_all[:, 0],
+    cps_all[:, 1],
+    c=jnp.arange(len(cps_all)),
+    cmap="plasma",
+    s=20,
+    alpha=0.6,
+)
+ax_d.plot(cps_all[0, 0], cps_all[0, 1], "gs", markersize=10, label="Initial")
+ax_d.plot(cps_all[-1, 0], cps_all[-1, 1], "r*", markersize=15, label="Final")
+ax_d.plot(cps_all[:, 0], cps_all[:, 1], "k-", alpha=0.2, linewidth=1)
+fig_final.colorbar(sc, ax=ax_d, label="Optimisation Step")
+ax_d.set_title("d) Control Point Evolution")
+ax_d.set_xlabel("Axial Position [mm]")
+ax_d.set_ylabel("Radial Position [mm]")
+ax_d.legend()
+ax_d.grid(True, alpha=0.3)
+
+plt.tight_layout()
 plt.savefig(str(OUT / f"{filename}.pdf"), format="pdf")
 plt.savefig(str(OUT / f"{filename}.png"), format="png", dpi=300)
 plt.savefig(str(OUT / f"{filename}.svg"), format="svg")
 
-print(f"Saved plots to {OUT}")
+print(f"Saved final comparison figure to {OUT}")

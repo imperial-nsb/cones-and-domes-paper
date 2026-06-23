@@ -388,3 +388,16 @@ np.savez(
 )
 
 
+# At end of examples/optimize_maxP.py, after `np.savez(...)`
+
+from scipy.io import savemat
+
+mat_output_file = f"figure3/optimize_maxP_spline_{timestamp}.mat"
+
+savemat(mat_output_file, {
+    "x": np.array(x),                      # axial coordinate
+    "r": np.array(r),                      # radial coordinate
+    "final_mask": np.array(final_shape_spline > 0.5, dtype=np.float32),  # final geometry mask
+    "final_field_spline": np.array(final_field_spline),       # pressure field with spline mask
+})
+print(f"Saved MATLAB file: {mat_output_file}")
