@@ -13,7 +13,8 @@ import os
 
 
 # Find the latest spline result file
-results_dir = Path("figure3")
+_DIR = Path(__file__).resolve().parent
+results_dir = _DIR
 spline_files = sorted(results_dir.glob("optimize_maxP_spline_*.npz"))
 
 if not spline_files:
@@ -85,11 +86,11 @@ for x, rmax in zip(reversed(x_curve), reversed(rmax_curve)):
 full_path = forward_points + backward_points
 
 # 4. Write to file
-with open("solidworks_export/spline_curve_points.txt", "w") as f:
+with open(_DIR / "spline_curve_points.txt", "w") as f:
     for p in full_path:
         f.write(f"{p[1]:.6f}\t{p[0]:.6f}\t{p[2]:.6f}\n")
 
-print(f"✓ Curve points saved: solidworks_export/spline_curve_points.txt")
+print(f"✓ Curve points saved: {_DIR / 'spline_curve_points.txt'}")
 
 # 2. Try using marching squares
 # Level 0.5 finds the midpoint between 0 and 1
@@ -115,9 +116,9 @@ df = pd.DataFrame({
 # 5. Export to CSV (SolidWorks likes tab or space delimited, but CSV works)
 # Export to .txt with Tab Separation
 # index=False and header=False are CRITICAL for SolidWorks
-df.to_csv("solidworks_export/MC_surface_curve.txt", 
+df.to_csv(_DIR / "MC_surface_curve.txt", 
           sep='\t', 
           index=False, 
           header=False)
 
-print(f"✓ Marching Squares curve saved to: solidworks_export/MC_surface_curve.txt")
+print(f"✓ Marching Squares curve saved to: {_DIR / 'MC_surface_curve.txt'}")

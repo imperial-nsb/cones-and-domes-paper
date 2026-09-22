@@ -95,3 +95,14 @@ paper/*/results_*.npz
 # Docs build artefacts
 docs/_build/
 site/
+
+# --- Paper figure release -------------------------------------------------
+# The cached simulation results below are versioned deliberately: they let each
+# figure be redrawn with --plot-only / --replot without re-running simulations
+# that take hours on a GPU. Everything else matched by *.npz / *.png above
+# stays ignored.
+!figure*/sweep_cache/*.npz
+!figure*/*.npz
+!figure*/*.png
+!solidworks_export/*.npz
+!solidworks_export/*.png
